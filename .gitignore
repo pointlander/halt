@@ -1,0 +1,18 @@
+# Build and test output
+/halt
+*.exe
+*.test
+*.out
+coverage.*
+*.coverprofile
+
+# Go workspace files are local
+go.work
+go.work.sum
+
+# Editor and OS junk
+.DS_Store
+*~
+*.swp
+.idea/
+.vscode/

@@ -229,6 +229,136 @@ func TestNoFalseLoop(t *testing.T) {
 	}
 }
 
+func TestProgramEncoding(t *testing.T) {
+	ones, err := encode(mustParse(t, "1RH1RH"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ones != "0111111" || len(ones) != programBits(1) {
+		t.Fatalf("1RH1RH encoded %s", ones)
+	}
+	sweep, err := encode(mustParse(t, "1RA1RA"))
+	if err != nil || sweep != "0110110" {
+		t.Fatalf("1RA1RA encoded %s %v", sweep, err)
+	}
+	for _, spec := range []string{
+		"1RH1RH",
+		"1RA1RA",
+		"1RB1LB_1LA1RH",
+		"1RB1RH_0RC1RB_1LC1LA",
+		"1RB1LB_1LA0LC_1RH1LD_1RD0RA",
+		"1RB1LC_1RC1RB_1RD0LE_1LA1LD_1RZ0LA",
+	} {
+		m := mustParse(t, spec)
+		prog, err := encode(m)
+		if err != nil {
+			t.Fatalf("%s: %v", spec, err)
+		}
+		if len(prog) != programBits(m.N) {
+			t.Fatalf("%s length %d, want %d", spec, len(prog), programBits(m.N))
+		}
+		got, err := decode(prog)
+		if err != nil {
+			t.Fatalf("decode %s: %v", spec, err)
+		}
+		if got.String() != m.String() {
+			t.Fatalf("round trip %s -> %s", m, got)
+		}
+		if _, err := decode(prog + "0"); err == nil {
+			t.Fatalf("%s accepts a trailing bit", spec)
+		}
+	}
+	if _, err := encode(mustParse(t, "1RA")); err == nil {
+		t.Fatal("partial table encoded as a program")
+	}
+	if programWitness("1RH", 1) != "1RH1RH" {
+		t.Fatalf("1-state witness %s", programWitness("1RH", 1))
+	}
+	for i := 0; i < definedProgramCount(1); i++ {
+		m := machineFromIndex(1, i)
+		prog, err := encode(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := decode(prog)
+		if err != nil || got.String() != m.String() {
+			t.Fatalf("index %d round trip %s -> %s %v", i, m, got, err)
+		}
+	}
+}
+
+func TestDecideK(t *testing.T) {
+	halt1, err := DecideK(mustParse(t, "1RH1RH"))
+	if err != nil || halt1.Verdict != VerdictHalt || halt1.Steps != 1 || !halt1.KExact || halt1.KBits != programBits(1) {
+		t.Fatalf("1RH1RH: %+v %v", halt1, err)
+	}
+	loop1, err := DecideK(mustParse(t, "1RA1RA"))
+	if err != nil || loop1.Verdict != VerdictLoop || loop1.Reason != ReasonK || loop1.KBound != 1 {
+		t.Fatalf("1RA1RA: %+v %v", loop1, err)
+	}
+	bb2, err := DecideK(mustParse(t, "1RB1LB_1LA1RH"))
+	if err != nil || bb2.Verdict != VerdictHalt || bb2.Steps != 6 || !bb2.KExact || bb2.KBits != programBits(2) {
+		t.Fatalf("BB2: %+v %v", bb2, err)
+	}
+
+	complexityClasses()
+	champ := mustParse(t, kClass[3].Steps.Spec)
+	bb3, err := DecideK(champ)
+	if err != nil || bb3.Verdict != VerdictHalt || bb3.Steps != kClass[3].Steps.Steps || bb3.Steps != bb3.KBound || !bb3.KExact {
+		t.Fatalf("3-state step champion %s: %+v %v", champ, bb3, err)
+	}
+	sweep3, err := DecideK(mustParse(t, "1RA1RA_1RA1RA_1RA1RA"))
+	if err != nil || sweep3.Verdict != VerdictLoop || sweep3.Reason != ReasonK || sweep3.KBound != bb3.KBound {
+		t.Fatalf("3-state sweep: %+v %v", sweep3, err)
+	}
+
+	// The 4-state cutoff is not proved. A halt is still a witness.
+	// A machine that is still running must stay unknown.
+	bb4, err := DecideK(mustParse(t, "1RB1LB_1LA0LC_1RH1LD_1RD0RA"))
+	if err != nil || bb4.Verdict != VerdictHalt || bb4.Steps != 107 || bb4.KExact || bb4.Reason == ReasonK {
+		t.Fatalf("BB4: %+v %v", bb4, err)
+	}
+	open4, err := DecideK(mustParse(t, "1RA1RA_1RA1RA_1RA1RA_1RA1RA"))
+	if err != nil || open4.Verdict != VerdictUnknown || open4.Reason != ReasonK {
+		t.Fatalf("4-state sweep: %+v %v", open4, err)
+	}
+	if _, err := DecideK(mustParse(t, "1RA")); err == nil {
+		t.Fatal("partial machine was decided by the cutoff")
+	}
+}
+
+func TestKBoundMatchesTables(t *testing.T) {
+	for n := 1; n <= 2; n++ {
+		bound, ok := stepCutoff(n)
+		if !ok {
+			t.Fatalf("n=%d cutoff not proved", n)
+		}
+		got := maxDefinedHalt(n, bound+50)
+		if got != bound {
+			t.Fatalf("n=%d complete programs halt in at most %d steps, cutoff %d", n, got, bound)
+		}
+	}
+}
+
+func maxDefinedHalt(n int, limit uint64) uint64 {
+	e := newEngine()
+	var max uint64
+	count := definedProgramCount(n)
+	for i := 0; i < count; i++ {
+		m := machineFromIndex(n, i)
+		e.load(m)
+		e.limit = limit
+		e.detect = false
+		e.wantTape = false
+		e.reset()
+		o := e.exec()
+		if o.Verdict == VerdictHalt && o.Steps > max {
+			max = o.Steps
+		}
+	}
+	return max
+}
+
 func mustParse(t *testing.T, spec string) Machine {
 	t.Helper()
 	m, err := Parse(spec)

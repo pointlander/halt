@@ -25,6 +25,8 @@ func main() {
 		cmdRun(os.Args[2:])
 	case "search":
 		cmdSearch(os.Args[2:])
+	case "k":
+		cmdK(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -46,9 +48,12 @@ Usage:
   halt run SPEC [--trace]      simulate one machine (a halt is a witness)
   halt decide SPEC [--limit N] prove halt or loop, or report unknown
   halt search N [--limit N]    search n-state machines for S(n) and Σ(n)
+  halt k                       program-size cutoff for short programs
+  halt k decide SPEC           decide SPEC by that cutoff
 
 SPEC is standard text format, for example 1RB1LB_1LA1RH.
 H and Z both mean halt. --- is an undefined transition.
+The k command requires a complete table: every transition is defined.
 `)
 }
 
@@ -119,6 +124,92 @@ func cmdSearch(args []string) {
 	printSearch(r, time.Since(start))
 }
 
+func cmdK(args []string) {
+	if len(args) == 0 {
+		printComplexity()
+		return
+	}
+	if args[0] != "decide" {
+		usage()
+		os.Exit(2)
+	}
+	spec := strings.Join(args[1:], "")
+	m, err := Parse(spec)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "parse: %v\n", err)
+		os.Exit(1)
+	}
+	o, err := DecideK(m)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+	printKDecision(m, o)
+}
+
+func printComplexity() {
+	fmt.Print(`Program-size complexity
+  Programs for the reference machine U are prefix-free encodings of complete
+  transition tables. U(p) is how many steps p runs on a blank tape. If p
+  halts in t steps, then K(t) is at most the length of p, so an L-bit program
+  halts within Σ_H(L) steps or not at all. Σ_H(L) is proved here only for
+  programs of at most 3 states, because only those classes are fully decided.
+  A machine past that line can still be seen to halt, but a run that is still
+  going is unknown: a lower bound on Σ_H is not a cutoff.
+
+`)
+	var prev uint64
+	for n := 1; n <= 3; n++ {
+		complexityClasses()
+		r := kClass[n]
+		kind := "proved"
+		if !r.Proved {
+			kind = "not proved"
+		}
+		fmt.Printf("  n=%d  %d bits  Σ_H=%s  %s\n", n, programBits(n), comma(r.Steps.Steps), kind)
+		if r.Proved && r.Steps.Steps > prev {
+			fmt.Printf("        K(%s) = %d   witness %s\n",
+				comma(r.Steps.Steps), programBits(n), programWitness(r.Steps.Spec, r.Steps.Steps))
+			prev = r.Steps.Steps
+		}
+	}
+	fmt.Printf("  n≥4  %d bits and up  Σ_H not proved\n", programBits(4))
+
+	fmt.Println("\nDecisions from the cutoff")
+	specs := []string{"1RH1RH", "1RA1RA", "1RB1LB_1LA1RH"}
+	if kClass[3].Steps.Spec != "" {
+		specs = append(specs, kClass[3].Steps.Spec)
+	}
+	specs = append(specs, "1RA1RA_1RA1RA_1RA1RA", "1RB1LB_1LA0LC_1RH1LD_1RD0RA")
+	for _, spec := range specs {
+		m, err := Parse(spec)
+		if err != nil {
+			fmt.Printf("  %s  parse error: %v\n", spec, err)
+			continue
+		}
+		o, err := DecideK(m)
+		if err != nil {
+			fmt.Printf("  %s  %v\n", spec, err)
+			continue
+		}
+		printKDecision(m, o)
+	}
+}
+
+func printKDecision(m Machine, o Outcome) {
+	fmt.Printf("  %s\n    %s\n", m, describe(o))
+	if o.Verdict == VerdictHalt && o.KBits > 0 {
+		op := "≤"
+		if o.KExact {
+			op = "="
+		}
+		fmt.Printf("    K(%s) %s %d\n", comma(o.Steps), op, o.KBits)
+	}
+	if o.Tape != "" && m.N <= 4 {
+		fmt.Printf("    tape %s\n", o.Tape)
+	}
+}
+
 func demo() {
 	fmt.Print(`A Turing machine, started on a blank tape, either halts or runs forever.
 No algorithm answers that for every machine. That is the halting problem.
@@ -178,6 +269,8 @@ Unknown means the step bound ran out before any of those proofs.
 		r := Search(n, lim)
 		printSearch(r, time.Since(start))
 	}
+	fmt.Println()
+	printComplexity()
 }
 
 func printOutcome(spec string, o Outcome) {
@@ -208,10 +301,17 @@ func describe(o Outcome) string {
 				o.Offset, o.Side)
 		case ReasonCounter:
 			return "does not halt: binary counter, adds one cell each time the counter overflows"
+		case ReasonK:
+			return fmt.Sprintf("does not halt: a %d-bit program halts within %s %s or not at all",
+				o.KBits, comma(o.KBound), stepsWord(o.KBound))
 		}
 		return fmt.Sprintf("does not halt: cycler, period %s, from step %s",
 			comma(o.Period), comma(o.Start))
 	default:
+		if o.Reason == ReasonK {
+			return fmt.Sprintf("unknown: no proved K cutoff for a %d-bit program (ran %s %s)",
+				o.KBits, comma(o.Steps), stepsWord(o.Steps))
+		}
 		return fmt.Sprintf("unknown after %s steps (%s)", comma(o.Steps), o.Reason)
 	}
 }
@@ -257,6 +357,49 @@ func defaultLimit(n int) uint64 {
 	default:
 		return 50_000_000
 	}
+}
+
+func stepsWord(n uint64) string {
+	if n == 1 {
+		return "step"
+	}
+	return "steps"
+}
+
+func encodable(m Machine) bool {
+	_, err := encode(m)
+	return err == nil
+}
+
+// programWitness is a complete program that halts in steps.
+// Search may leave an unread transition undefined; filling those with 1RH
+// keeps the blank-tape run when the gap was never used.
+func programWitness(spec string, steps uint64) string {
+	m, err := Parse(spec)
+	if err != nil {
+		return spec
+	}
+	if encodable(m) {
+		return m.String()
+	}
+	filled := m
+	filled.T = make([][2]Trans, m.N)
+	copy(filled.T, m.T)
+	for s := 0; s < filled.N; s++ {
+		for sym := 0; sym < 2; sym++ {
+			if !filled.T[s][sym].Def {
+				filled.T[s][sym] = Trans{Write: 1, Dir: 1, Next: -1, Def: true}
+			}
+		}
+	}
+	o := Simulate(filled, steps)
+	if o.Verdict == VerdictHalt && o.Steps == steps && encodable(filled) {
+		return filled.String()
+	}
+	if w, ok := completeWitness(m.N, steps); ok {
+		return w.String()
+	}
+	return spec
 }
 
 func comma(n uint64) string {

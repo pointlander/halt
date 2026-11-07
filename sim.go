@@ -35,6 +35,7 @@ const (
 	ReasonNoHalt
 	ReasonBounce
 	ReasonCounter
+	ReasonK
 	ReasonLimit
 	ReasonNeed
 )
@@ -55,6 +56,8 @@ func (r Reason) String() string {
 		return "bouncer"
 	case ReasonCounter:
 		return "binary counter"
+	case ReasonK:
+		return "program-size complexity"
 	case ReasonLimit:
 		return "step limit"
 	default:
@@ -80,6 +83,12 @@ type Outcome struct {
 	NeedState int
 	NeedSym   int
 	Tape      string
+	// KBits is the length of this machine's prefix-free program.
+	// KBound is the proved step cutoff Σ_H for programs of that length.
+	// KExact means K(Steps) equals KBits, not only an upper bound.
+	KBits  int
+	KBound uint64
+	KExact bool
 }
 
 func (o Outcome) Status() string {

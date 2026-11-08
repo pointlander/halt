@@ -10,6 +10,7 @@ No algorithm answers, for every Turing machine, whether it halts. `halt` proves 
 - a bouncer inserts one more copy of a block on every pass
 - a binary counter adds one cell each time it overflows
 - a proved program-size cutoff is past and the machine is still running (`halt k`)
+- every path into a halting read contradicts within the steps already run (`halt stat`)
 
 S(n) is the longest a halting n-state 2-symbol machine can run. Σ(n) is the most 1s one can leave. Both are uncomputable. This program computes them for small n by deciding machines, not by looking up the published values.
 
@@ -52,11 +53,13 @@ halt decide SPEC [--limit N]
 halt search N [--limit N]
 halt k
 halt k decide SPEC
+halt stat
+halt stat decide SPEC [--limit N]
 ```
 
-`run` only simulates. Hitting the step limit is unknown, not a loop. `decide` adds the loop proofs above, except the program-size cutoff. `search` enumerates machines in tree normal form. For n > 1 the first transition is fixed as `1RB`; mirrors and state relabelings are omitted. When every machine is decided, S(n), Σ(n), and space(n) are proved. Otherwise the three scores are lower bounds from machines that did halt.
+`run` only simulates. Hitting the step limit is unknown, not a loop. `decide` adds the loop proofs above, except the program-size cutoff and the state-symbol search. `search` enumerates machines in tree normal form. For n > 1 the first transition is fixed as `1RB`; mirrors and state relabelings are omitted. When every machine is decided, S(n), Σ(n), and space(n) are proved. Otherwise the three scores are lower bounds from machines that did halt.
 
-`halt k` is a separate solver. See below.
+`halt k` and `halt stat` are separate solvers. See below.
 
 ## Busy beaver
 
@@ -97,6 +100,22 @@ halt k decide 1RB1RH_1LB0RC_1LC1LA
 ```
 
 `1RA` is rejected: `---` is not a program for U.
+
+## State-symbol search
+
+`halt stat` counts each forward read by state and symbol, then searches backward from every halting read. A reverse step undoes one transition. It stands when the cell that transition wrote is still unknown, or already holds that write. A different known symbol kills the branch.
+
+If every branch contradicts by depth H, a halting read is reachable in at most H steps, so the halt itself occurs by step H+1. A blank-tape run that has already gone past that step is a loop proof. The forward counts choose which branch to expand first. Every branch is expanded, so a rare read can still be the one that halts. A tree that reaches the depth cap (32) or the node cap (100,000) stays unknown.
+
+A halt verdict is still the forward simulation. Machines with no halting transition at all are loops at once. Published values of S(n) are not used.
+
+```sh
+halt stat
+halt stat decide --limit 32 1RB1RA_0LC1RA_---1LA
+halt stat decide --limit 4 1RB1LB_1LA1RH
+```
+
+The first machine's only halt is unreachable: the sole path into it writes a 1 where the path needs a 0. The second is the 2-state step champion. Four steps are not enough to pass its halting read, so the result stays unknown. Six steps halt.
 
 ## License
 

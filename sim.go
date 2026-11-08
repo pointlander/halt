@@ -36,6 +36,7 @@ const (
 	ReasonBounce
 	ReasonCounter
 	ReasonK
+	ReasonStat
 	ReasonLimit
 	ReasonNeed
 )
@@ -58,6 +59,8 @@ func (r Reason) String() string {
 		return "binary counter"
 	case ReasonK:
 		return "program-size complexity"
+	case ReasonStat:
+		return "state-symbol search"
 	case ReasonLimit:
 		return "step limit"
 	default:
@@ -89,6 +92,17 @@ type Outcome struct {
 	KBits  int
 	KBound uint64
 	KExact bool
+	// StatDepth is the deepest consistent backward step.
+	// A negative depth means the table has no halting transition.
+	// StatState/StatSym/StatCount describe the forward mode.
+	// StatLine lists every forward read count, most common first.
+	// Period, for ReasonStat, is the number of backward nodes expanded.
+	StatDepth int
+	StatState int
+	StatSym   int
+	StatCount uint64
+	StatReads uint64
+	StatLine  string
 }
 
 func (o Outcome) Status() string {

@@ -27,6 +27,8 @@ func main() {
 		cmdSearch(os.Args[2:])
 	case "k":
 		cmdK(os.Args[2:])
+	case "stat":
+		cmdStat(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -50,6 +52,9 @@ Usage:
   halt search N [--limit N]    search n-state machines for S(n) and Σ(n)
   halt k                       program-size cutoff for short programs
   halt k decide SPEC           decide SPEC by that cutoff
+  halt stat                    backward and forward state-symbol search
+  halt stat decide SPEC [--limit N]
+                               decide SPEC by that search
 
 SPEC is standard text format, for example 1RB1LB_1LA1RH.
 H and Z both mean halt. --- is an undefined transition.
@@ -196,6 +201,72 @@ func printComplexity() {
 	}
 }
 
+func cmdStat(args []string) {
+	if len(args) == 0 {
+		printStat()
+		return
+	}
+	if args[0] != "decide" {
+		usage()
+		os.Exit(2)
+	}
+	fs := flag.NewFlagSet("stat", flag.ExitOnError)
+	limit := fs.Uint64("limit", 0, "maximum steps (0 selects a default)")
+	// endFlags keeps a machine such as ------ from being read as a flag.
+	fs.Parse(endFlags(args[1:]))
+	spec := strings.Join(fs.Args(), "")
+	m, err := Parse(spec)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "parse: %v\n", err)
+		os.Exit(1)
+	}
+	lim := *limit
+	if lim == 0 {
+		lim = defaultLimit(m.N)
+	}
+	printStatDecision(m, DecideStat(m, lim))
+}
+
+func printStat() {
+	fmt.Print(`State-symbol search
+  Forward, every read is counted by state and symbol. Backward, each
+  halting read is the root of a tree of partial tapes. A reverse step
+  stands when the cell it wrote is still unknown or already holds that
+  write. If every branch contradicts by depth H, a halt occurs by step
+  H+1. A blank-tape run that has already passed that step is a loop
+  proof. The counts choose which branch to expand first. Every branch
+  is still expanded. A tree that hits the depth cap or the node cap is unknown.
+
+`)
+	samples := []struct {
+		spec  string
+		limit uint64
+	}{
+		{"1RA1RA_1RH1RH", 32},
+		{"1RB1RA_0LC1RA_---1LA", 32},
+		{"1RB1LB_1LA1RH", 32},
+		{"1RB1LB_1LA1RH", 4},
+	}
+	for _, s := range samples {
+		m, err := Parse(s.spec)
+		if err != nil {
+			fmt.Printf("  %s  parse error: %v\n", s.spec, err)
+			continue
+		}
+		printStatDecision(m, DecideStat(m, s.limit))
+	}
+}
+
+func printStatDecision(m Machine, o Outcome) {
+	fmt.Printf("  %s\n    %s\n", m, describe(o))
+	if o.StatLine != "" {
+		fmt.Printf("    reads %s\n", o.StatLine)
+	}
+	if o.Tape != "" && o.Verdict == VerdictHalt && m.N <= 4 {
+		fmt.Printf("    tape %s\n", o.Tape)
+	}
+}
+
 func printKDecision(m Machine, o Outcome) {
 	fmt.Printf("  %s\n    %s\n", m, describe(o))
 	if o.Verdict == VerdictHalt && o.KBits > 0 {
@@ -271,6 +342,8 @@ Unknown means the step bound ran out before any of those proofs.
 	}
 	fmt.Println()
 	printComplexity()
+	fmt.Println()
+	printStat()
 }
 
 func printOutcome(spec string, o Outcome) {
@@ -304,6 +377,16 @@ func describe(o Outcome) string {
 		case ReasonK:
 			return fmt.Sprintf("does not halt: a %d-bit program halts within %s %s or not at all",
 				o.KBits, comma(o.KBound), stepsWord(o.KBound))
+		case ReasonStat:
+			if o.StatDepth < 0 {
+				return "does not halt: no transition halts"
+			}
+			if o.StatDepth == 0 {
+				return fmt.Sprintf("does not halt: nothing reaches a halting read, and the blank tape ran %s %s",
+					comma(o.Steps), stepsWord(o.Steps))
+			}
+			return fmt.Sprintf("does not halt: every path to a halting read contradicts by depth %d, and the blank tape ran %s %s",
+				o.StatDepth, comma(o.Steps), stepsWord(o.Steps))
 		}
 		return fmt.Sprintf("does not halt: cycler, period %s, from step %s",
 			comma(o.Period), comma(o.Start))
@@ -312,8 +395,44 @@ func describe(o Outcome) string {
 			return fmt.Sprintf("unknown: no proved K cutoff for a %d-bit program (ran %s %s)",
 				o.KBits, comma(o.Steps), stepsWord(o.Steps))
 		}
+		if o.Reason == ReasonStat {
+			return describeStatUnknown(o)
+		}
 		return fmt.Sprintf("unknown after %s steps (%s)", comma(o.Steps), o.Reason)
 	}
+}
+
+func describeStatUnknown(o Outcome) string {
+	if o.Period > uint64(statNodeCap) {
+		return fmt.Sprintf("unknown: backward search hit the node cap at depth %d (%s nodes, ran %s %s)",
+			o.StatDepth, comma(o.Period), comma(o.Steps), stepsWord(o.Steps))
+	}
+	return fmt.Sprintf("unknown: backward search stopped at depth %d (%s nodes, ran %s %s)",
+		o.StatDepth, comma(o.Period), comma(o.Steps), stepsWord(o.Steps))
+}
+
+// endFlags inserts "--" before the machine, so a spec of dashes is an
+// argument and a limit flag placed in front of it still parses.
+func endFlags(args []string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			return append(out, args[i:]...)
+		}
+		if a == "-limit" || a == "--limit" {
+			out = append(out, a)
+			if i+1 < len(args) {
+				i++
+				out = append(out, args[i])
+			}
+			continue
+		}
+		out = append(out, "--")
+		out = append(out, args[i:]...)
+		return out
+	}
+	return out
 }
 
 func printSearch(r SearchResult, dt time.Duration) {

@@ -340,6 +340,104 @@ func TestKBoundMatchesTables(t *testing.T) {
 	}
 }
 
+func TestDecideStat(t *testing.T) {
+	for _, c := range Champions {
+		m := mustParse(t, c.Spec)
+		o := DecideStat(m, c.Steps)
+		if o.Verdict != VerdictHalt || o.Steps != c.Steps || o.Ones != c.Ones {
+			t.Fatalf("BB(%d) %s: %s steps=%d ones=%d reason=%s, want halt steps=%d ones=%d",
+				c.N, c.Spec, o.Status(), o.Steps, o.Ones, o.Reason, c.Steps, c.Ones)
+		}
+	}
+
+	// A short run of a real halter is unknown. A loop here would be a false proof.
+	open := []struct {
+		spec  string
+		limit uint64
+	}{
+		{"1RB1LB_1LA1RH", 4},
+		{"1RB1LB_1LA1RH", 5},
+		{"1RB1LB_1LA0LC_1RH1LD_1RD0RA", 50},
+		{"1RB1LC_1RC1RB_1RD0LE_1LA1LD_1RZ0LA", 10_000},
+		{"1RB1RH_0RC1RB_1LC1LA", 5},
+		// Undefined halt at step 2. limit 2 stops before that read.
+		{"0RB1RA_0LC1RA_---1LA", 2},
+		// Skelet #10. An earlier backward-reasoning implementation closed
+		// this machine unsoundly. The tree is still open inside our caps.
+		{"1RB0RA_0LC1RA_1RE1LD_1LC0LD_---0RB", 100},
+	}
+	for _, c := range open {
+		m := mustParse(t, c.spec)
+		o := DecideStat(m, c.limit)
+		if o.Verdict == VerdictLoop {
+			t.Fatalf("%s limit %d proved loop (%s depth %d)", c.spec, c.limit, o.Reason, o.StatDepth)
+		}
+	}
+
+	bb2 := DecideStat(mustParse(t, "1RB1LB_1LA1RH"), 6)
+	if bb2.Verdict != VerdictHalt || bb2.Steps != 6 || bb2.Ones != 4 {
+		t.Fatalf("BB2 at 6: %+v", bb2)
+	}
+	if bb2.StatLine != "A0 x 2 B0 x 2 A1 x 1 B1 x 1" && bb2.StatLine != "B0 x 2 A0 x 2 A1 x 1 B1 x 1" {
+		// A0 and B0 tie at 2. The mode scan keeps the earlier state.
+		t.Fatalf("BB2 reads %q", bb2.StatLine)
+	}
+	if bb2.StatState != 0 || bb2.StatSym != 0 || bb2.StatCount != 2 || bb2.StatReads != 6 {
+		t.Fatalf("BB2 mode state=%d sym=%d count=%d reads=%d", bb2.StatState, bb2.StatSym, bb2.StatCount, bb2.StatReads)
+	}
+
+	early := DecideStat(mustParse(t, "1RB1LB_1LA1RH"), 4)
+	if early.Verdict != VerdictUnknown || early.Reason != ReasonStat || early.Steps != 4 {
+		t.Fatalf("BB2 at 4: %s %s steps=%d", early.Status(), early.Reason, early.Steps)
+	}
+	if early.StatLine != "B0 x 2 A0 x 1 A1 x 1" {
+		t.Fatalf("BB2 early reads %q", early.StatLine)
+	}
+
+	halt1 := DecideStat(mustParse(t, "1RH"), 10)
+	if halt1.Verdict != VerdictHalt || halt1.Steps != 1 || halt1.Reason != ReasonHalt {
+		t.Fatalf("1RH: %+v", halt1)
+	}
+	blank := DecideStat(mustParse(t, "------"), 10)
+	if blank.Verdict != VerdictHalt || blank.Steps != 0 || blank.Reason != ReasonUndefined {
+		t.Fatalf("------: %+v", blank)
+	}
+
+	// B's halt is unreachable. The blank tape never leaves A.
+	dead := DecideStat(mustParse(t, "1RA1RA_1RH1RH"), 10)
+	if dead.Verdict != VerdictLoop || dead.Reason != ReasonStat || dead.StatDepth != 0 {
+		t.Fatalf("dead halt: %+v", dead)
+	}
+	sweep := DecideStat(mustParse(t, "1RA1RA"), 10)
+	if sweep.Verdict != VerdictLoop || sweep.Reason != ReasonStat || sweep.StatDepth != -1 {
+		t.Fatalf("1RA1RA: %+v", sweep)
+	}
+	if sweep.StatState != 0 || sweep.StatSym != 0 || sweep.StatCount != 10 || sweep.StatReads != 10 || sweep.StatLine != "A0 x 10" {
+		t.Fatalf("1RA1RA reads state=%d sym=%d count=%d total=%d line=%q",
+			sweep.StatState, sweep.StatSym, sweep.StatCount, sweep.StatReads, sweep.StatLine)
+	}
+
+	// The only halt reads 0 in C. Reaching it requires a 0 that the
+	// previous step wrote as a 1. Depth 1 closes the tree.
+	contra := mustParse(t, "1RB1RA_0LC1RA_---1LA")
+	if got := DecideStat(contra, 1); got.Verdict == VerdictLoop {
+		t.Fatalf("contradiction machine looped at limit 1, depth %d", got.StatDepth)
+	}
+	got := DecideStat(contra, 2)
+	if got.Verdict != VerdictLoop || got.Reason != ReasonStat || got.StatDepth != 1 || got.Period != 2 {
+		t.Fatalf("contradiction machine: %s %s depth=%d nodes=%d", got.Status(), got.Reason, got.StatDepth, got.Period)
+	}
+	sim := Simulate(contra, 100_000)
+	if sim.Verdict == VerdictHalt {
+		t.Fatalf("contradiction machine halted at step %d", sim.Steps)
+	}
+
+	late := DecideStat(mustParse(t, "0RB1RA_0LC1RA_---1LA"), 3)
+	if late.Verdict != VerdictHalt || late.Steps != 2 || late.Reason != ReasonUndefined {
+		t.Fatalf("matching write: %+v", late)
+	}
+}
+
 func maxDefinedHalt(n int, limit uint64) uint64 {
 	e := newEngine()
 	var max uint64

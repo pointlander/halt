@@ -58,6 +58,7 @@ halt stat
 halt stat decide SPEC [--limit N]
 halt tree
 halt tree decide TERM [--limit N]
+halt tree bb
 ```
 
 `run` only simulates. Hitting the step limit is unknown, not a loop. `decide` adds the loop proofs above, except the program-size cutoff, the state-symbol search, and tree calculus. `search` enumerates machines in tree normal form. For n > 1 the first transition is fixed as `1RB`; mirrors and state relabelings are omitted. When every machine is decided, S(n), Σ(n), and space(n) are proved. Otherwise the three scores are lower bounds from machines that did halt.
@@ -142,9 +143,14 @@ The limit flag comes before the term.
 halt tree
 halt tree decide '^ ^ ^ ^'
 halt tree decide --limit 1 '^ ^ ^ ^'
+halt tree bb
 ```
 
 `^ ^ ^ ^` is `△ △ ^ ^`, which reduces to `^`.
+
+`halt tree bb` builds one term for every 2-state tree-normal-form machine and decides that term. The term contains the transition table and a blank-tape simulator, including the tape, the step counter, and the loop check. Reduction is the proof. A score value is a halt. An application of two ω-blocks, or a repeated term, is a loop. A closed transition graph reduces to ω ω and the simulator is discarded. An undefined read is not scored: the enumerator fills that slot and tries again. The printed-size cap for this search is 1 GiB. A machine that hits the step cap or that cap stays unknown, and the three scores are then only lower bounds. This is a decision of the 2-state blank-tape machines. It is not a decision procedure for every Turing machine.
+
+That search decides all 136 machines: 30 halt and 106 loop. It proves S(2) = 6, Σ(2) = 4, and space(2) = 4, each from `1RB1LB_1LA1RH`.
 
 ## License
 

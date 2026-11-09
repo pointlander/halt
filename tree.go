@@ -239,8 +239,23 @@ const treeBlockNote = "an application of two ω-blocks, and every reduct is agai
 
 // DecideTree searches by parallel outermost reduction.
 // stepCap bounds how many terms of that path are developed, including
-// the start. A non-positive cap selects the default.
+// the start. A non-positive cap selects the default. The printed-size
+// cap is treeByteCap.
 func DecideTree(t *treeTerm, stepCap int) TreeResult {
+	return decideTree(t, stepCap, treeByteCap)
+}
+
+// DecideTreeLimit is DecideTree with an explicit printed-size cap.
+// A non-positive byte cap selects treeByteCap. The BB2 solver passes
+// a larger cap; the default search stays at treeByteCap.
+func DecideTreeLimit(t *treeTerm, stepCap, byteCap int) TreeResult {
+	if byteCap <= 0 {
+		byteCap = treeByteCap
+	}
+	return decideTree(t, stepCap, byteCap)
+}
+
+func decideTree(t *treeTerm, stepCap, byteCap int) TreeResult {
 	if t == nil {
 		return TreeResult{Verdict: VerdictUnknown, Note: "empty term"}
 	}
@@ -256,7 +271,7 @@ func DecideTree(t *treeTerm, stepCap int) TreeResult {
 	seen := map[string]int{}
 	cur := t
 	for step := 0; step < stepCap; step++ {
-		k, ok := cur.key(treeByteCap)
+		k, ok := cur.key(byteCap)
 		if !ok {
 			if proveOmega(cur) {
 				return TreeResult{Verdict: VerdictLoop, Steps: step, Note: treeBlockNote}

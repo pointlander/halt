@@ -60,6 +60,7 @@ Usage:
   halt tree                    tree-calculus reduction search
   halt tree decide TERM [--limit N]
                                decide TERM by that search
+  halt tree bb                 decide every 2-state machine by tree reduction
 
 SPEC is standard text format, for example 1RB1LB_1LA1RH.
 H and Z both mean halt. --- is an undefined transition.
@@ -269,6 +270,10 @@ func cmdTree(args []string) {
 		printTree()
 		return
 	}
+	if args[0] == "bb" {
+		cmdTreeBB(args[1:])
+		return
+	}
 	if args[0] != "decide" {
 		usage()
 		os.Exit(2)
@@ -283,6 +288,20 @@ func cmdTree(args []string) {
 		os.Exit(1)
 	}
 	printTreeDecision(term.String(), DecideTree(term, treeCap(*limit)))
+}
+
+func cmdTreeBB(args []string) {
+	fs := flag.NewFlagSet("tree bb", flag.ExitOnError)
+	fs.Parse(args)
+	if len(fs.Args()) != 0 {
+		usage()
+		os.Exit(2)
+	}
+	res := SolveBB2()
+	fmt.Println(res.Text())
+	if !res.Proved {
+		os.Exit(1)
+	}
 }
 
 func treeCap(limit uint64) int {
@@ -306,6 +325,9 @@ func printTree() {
   produces more of those applications. K leaf (ω ω) halts, because that
   rule discards the copy. A search that hits the step cap is unknown.
   No term decides halting for every term.
+  halt tree bb decides every 2-state blank-tape machine. Each machine
+  is one term: the transition table and a simulator. A score is a halt.
+  ω ω, or the same term twice, is a loop. The printed-size cap is 1 GiB.
 
 `)
 	k := treeK()

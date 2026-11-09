@@ -29,6 +29,8 @@ func main() {
 		cmdK(os.Args[2:])
 	case "stat":
 		cmdStat(os.Args[2:])
+	case "tree":
+		cmdTree(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -55,10 +57,15 @@ Usage:
   halt stat                    backward and forward state-symbol search
   halt stat decide SPEC [--limit N]
                                decide SPEC by that search
+  halt tree                    tree-calculus reduction search
+  halt tree decide TERM [--limit N]
+                               decide TERM by that search
 
 SPEC is standard text format, for example 1RB1LB_1LA1RH.
 H and Z both mean halt. --- is an undefined transition.
 The k command requires a complete table: every transition is defined.
+A tree term uses ^ for the leaf. Application is juxtaposition and
+associates to the left. Parentheses group. △ and Δ are also the leaf.
 `)
 }
 
@@ -257,6 +264,71 @@ func printStat() {
 	}
 }
 
+func cmdTree(args []string) {
+	if len(args) == 0 {
+		printTree()
+		return
+	}
+	if args[0] != "decide" {
+		usage()
+		os.Exit(2)
+	}
+	fs := flag.NewFlagSet("tree", flag.ExitOnError)
+	limit := fs.Uint64("limit", 0, "maximum parallel-outermost steps (0 selects a default)")
+	fs.Parse(args[1:])
+	spec := strings.Join(fs.Args(), " ")
+	term, err := ParseTree(spec)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "parse: %v\n", err)
+		os.Exit(1)
+	}
+	printTreeDecision(term.String(), DecideTree(term, treeCap(*limit)))
+}
+
+func treeCap(limit uint64) int {
+	if limit == 0 {
+		return treeStepCap
+	}
+	if limit > uint64(treeStepCapMax) {
+		return treeStepCapMax
+	}
+	return int(limit)
+}
+
+func printTree() {
+	fmt.Print(`Tree calculus
+  A term is a leaf or the application of two terms. Five triage rules
+  reduce it: △ △ y z becomes y, △ (△ x) y z becomes x z (y z), and a
+  fork △ (△ w x) y applied to a leaf, a stem, or a fork selects w, x,
+  or y. The search contracts every outermost redex together. A value is
+  a halt witness. ω ω does not halt: a block is ω, I on a block, or K
+  on a block applied to K on a block, and applying two blocks only
+  produces more of those applications. K leaf (ω ω) halts, because that
+  rule discards the copy. A search that hits the step cap is unknown.
+  No term decides halting for every term.
+
+`)
+	k := treeK()
+	w := treeOmega()
+	samples := []struct {
+		name string
+		term *treeTerm
+	}{
+		{"leaf", tLeaf()},
+		{"not false", tApp(treeNot(), tLeaf())},
+		{"not true", tApp(treeNot(), k)},
+		{"K leaf (ω ω)", tApp(tApp(k, tLeaf()), tApp(w, w))},
+		{"ω ω", tApp(w, w)},
+	}
+	for _, s := range samples {
+		fmt.Printf("  %s\n    %s\n    %s\n", s.name, s.term, DecideTree(s.term, 0).Text())
+	}
+}
+
+func printTreeDecision(spec string, r TreeResult) {
+	fmt.Printf("  %s\n    %s\n", spec, r.Text())
+}
+
 func printStatDecision(m Machine, o Outcome) {
 	fmt.Printf("  %s\n    %s\n", m, describe(o))
 	if o.StatLine != "" {
@@ -344,6 +416,8 @@ Unknown means the step bound ran out before any of those proofs.
 	printComplexity()
 	fmt.Println()
 	printStat()
+	fmt.Println()
+	printTree()
 }
 
 func printOutcome(spec string, o Outcome) {

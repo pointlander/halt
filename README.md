@@ -11,6 +11,7 @@ No algorithm answers, for every Turing machine, whether it halts. `halt` proves 
 - a binary counter adds one cell each time it overflows
 - a proved program-size cutoff is past and the machine is still running (`halt k`)
 - every path into a halting read contradicts within the steps already run (`halt stat`)
+- a tree-calculus term reaches a value, or it is an application of two ω-blocks (`halt tree`)
 
 S(n) is the longest a halting n-state 2-symbol machine can run. Σ(n) is the most 1s one can leave. Both are uncomputable. This program computes them for small n by deciding machines, not by looking up the published values.
 
@@ -55,11 +56,13 @@ halt k
 halt k decide SPEC
 halt stat
 halt stat decide SPEC [--limit N]
+halt tree
+halt tree decide TERM [--limit N]
 ```
 
-`run` only simulates. Hitting the step limit is unknown, not a loop. `decide` adds the loop proofs above, except the program-size cutoff and the state-symbol search. `search` enumerates machines in tree normal form. For n > 1 the first transition is fixed as `1RB`; mirrors and state relabelings are omitted. When every machine is decided, S(n), Σ(n), and space(n) are proved. Otherwise the three scores are lower bounds from machines that did halt.
+`run` only simulates. Hitting the step limit is unknown, not a loop. `decide` adds the loop proofs above, except the program-size cutoff, the state-symbol search, and tree calculus. `search` enumerates machines in tree normal form. For n > 1 the first transition is fixed as `1RB`; mirrors and state relabelings are omitted. When every machine is decided, S(n), Σ(n), and space(n) are proved. Otherwise the three scores are lower bounds from machines that did halt.
 
-`halt k` and `halt stat` are separate solvers. See below.
+`halt k`, `halt stat`, and `halt tree` are separate solvers. See below.
 
 ## Busy beaver
 
@@ -116,6 +119,32 @@ halt stat decide --limit 4 1RB1LB_1LA1RH
 ```
 
 The first machine's only halt is unreachable: the sole path into it writes a 1 where the path needs a 0. The second is the 2-state step champion. Four steps are not enough to pass its halting read, so the result stays unknown. Six steps halt.
+
+## Tree calculus
+
+`halt tree` decides terms of the triage calculus. A term is a leaf or the application of two terms. `^` is the leaf. `△` and `Δ` are the same leaf. Application is written by juxtaposition and associates to the left. Parentheses group.
+
+The five rules are:
+
+```text
+△ △ y z             →  y
+△ (△ x) y z         →  x z (y z)
+△ (△ w x) y △       →  w
+△ (△ w x) y (△ u)   →  x u
+△ (△ w x) y (△ u v) →  y u v
+```
+
+A value, a tree with no subterm `△ a b c`, is a halt witness. The solver contracts every outermost redex in one step. The rules are left-linear and do not overlap, so that strategy reaches a value whenever the term has one. The same term appearing again is a loop. So is an application of two ω-blocks, which is how `ω ω` is decided without waiting out the cycle. `K` is `△ △`, `I` is `△ (△ K) K`, and `ω` is `△ (△ I) I`. A block is `ω`, or `I` on a block, or `K` on a block applied to `K` on a block. Applying two blocks always has a redex, and every reduct is another such application. `△ △ leaf (ω ω)` halts as the leaf, because the first rule discards the copy of `ω ω`. A search that reaches the step cap or the printed-size cap stays unknown. Reaching a value decides that term. It does not decide halting for every term, and it is not a new decision procedure for Turing machines.
+
+The limit flag comes before the term.
+
+```sh
+halt tree
+halt tree decide '^ ^ ^ ^'
+halt tree decide --limit 1 '^ ^ ^ ^'
+```
+
+`^ ^ ^ ^` is `△ △ ^ ^`, which reduces to `^`.
 
 ## License
 
